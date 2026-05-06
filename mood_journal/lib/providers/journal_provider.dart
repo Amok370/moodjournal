@@ -2,29 +2,57 @@ import 'package:flutter/material.dart';
 import '../database/database_helper.dart';
 import '../models/journal_entry.dart';
 
+/// Journal entry'lerinin state yönetimini sağlayan provider.
+///
+/// Veritabanından veri yükleme, CRUD operasyonları, arama ve
+/// istatistik hesaplama işlevlerini UI katmanına sunar.
+/// Tüm async operasyonlar try-catch ile korunmuştur.
 class JournalProvider with ChangeNotifier {
   final DatabaseHelper _db = DatabaseHelper();
 
   List<JournalEntry> _entries = [];
   List<JournalEntry> _filteredEntries = [];
   bool _isLoading = false;
+  bool _isInitialized = false;
   String _searchQuery = '';
+  String? _errorMessage;
 
-  // Getters
-  List<JournalEntry> get entries => _searchQuery.isEmpty ? _entries : _filteredEntries;
+  // ─── Getters ───
+  List<JournalEntry> get entries =>
+      _searchQuery.isEmpty ? _entries : _filteredEntries;
   List<JournalEntry> get allEntries => _entries;
   bool get isLoading => _isLoading;
+  bool get isInitialized => _isInitialized;
   String get searchQuery => _searchQuery;
 
+  /// Son hata mesajı. Hata yoksa `null` döner.
+  String? get errorMessage => _errorMessage;
+
+  /// Hata durumunu temizler.
+  void clearError() {
+    _errorMessage = null;
+    notifyListeners();
+  }
+
   // ─── Entry'leri Yükle ───
-  Future<void> loadEntries() async {
+  /// Veritabanından tüm entry'leri yükler.
+  ///
+  /// Çift yükleme koruması vardır: [_isInitialized] kontrolü sayesinde
+  /// birden fazla kez çağrılsa bile yalnızca ilkinde DB sorgusu yapar.
+  /// Zorla yeniden yüklemek için [force] parametresini `true` yapın.
+  Future<void> loadEntries({bool force = false}) async {
+    if (_isInitialized && !force) return;
+
     _isLoading = true;
+    _errorMessage = null;
     notifyListeners();
 
     try {
       _entries = await _db.getEntries();
+      _isInitialized = true;
     } catch (e) {
-      debugPrint('Entry yükleme hatası: $e');
+      _errorMessage = 'Veriler yüklenirken bir sorun oluştu.';
+      debugPrint('❌ Entry yükleme hatası: $e');
     }
 
     _isLoading = false;
@@ -45,7 +73,7 @@ class JournalProvider with ChangeNotifier {
       _entries.insert(0, entry); // En başa ekle
       notifyListeners();
     } catch (e) {
-      debugPrint('Entry ekleme hatası: $e');
+      debugPrint('❌ Entry ekleme hatası: $e');
       rethrow;
     }
   }
@@ -60,7 +88,7 @@ class JournalProvider with ChangeNotifier {
         notifyListeners();
       }
     } catch (e) {
-      debugPrint('Entry güncelleme hatası: $e');
+      debugPrint('❌ Entry güncelleme hatası: $e');
       rethrow;
     }
   }
@@ -72,7 +100,7 @@ class JournalProvider with ChangeNotifier {
       _entries.removeWhere((e) => e.id == id);
       notifyListeners();
     } catch (e) {
-      debugPrint('Entry silme hatası: $e');
+      debugPrint('❌ Entry silme hatası: $e');
       rethrow;
     }
   }

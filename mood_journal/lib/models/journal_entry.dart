@@ -17,10 +17,10 @@ class JournalEntry {
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.now();
 
-  /// SQLite Map'e dönüştür
+  /// SQLite Map'e dönüştür.
+  /// [id] null ise map'ten çıkarılır (AUTOINCREMENT uyumu).
   Map<String, dynamic> toMap() {
-    return {
-      'id': id,
+    final map = <String, dynamic>{
       'date': date.toIso8601String(),
       'mood_score': moodScore,
       'trigger_text': trigger,
@@ -28,6 +28,10 @@ class JournalEntry {
       'coping_strategy': copingStrategy,
       'created_at': createdAt.toIso8601String(),
     };
+    if (id != null) {
+      map['id'] = id;
+    }
+    return map;
   }
 
   /// SQLite Map'ten oluştur

@@ -13,15 +13,19 @@ class CopingStrategy {
     this.isDefault = false,
   });
 
-  /// SQLite Map'e dönüştür
+  /// SQLite Map'e dönüştür.
+  /// [id] null ise map'ten çıkarılır (AUTOINCREMENT uyumu).
   Map<String, dynamic> toMap() {
-    return {
-      'id': id,
+    final map = <String, dynamic>{
       'name': name,
       'description': description,
       'usage_count': usageCount,
       'is_default': isDefault ? 1 : 0,
     };
+    if (id != null) {
+      map['id'] = id;
+    }
+    return map;
   }
 
   /// SQLite Map'ten oluştur

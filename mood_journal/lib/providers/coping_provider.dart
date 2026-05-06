@@ -2,15 +2,31 @@ import 'package:flutter/material.dart';
 import '../database/database_helper.dart';
 import '../models/coping_strategy.dart';
 
+/// Coping stratejilerinin state yönetimini sağlayan provider.
+///
+/// Varsayılan ve kullanıcı tanımlı stratejileri yönetir.
+/// Kullanım sayaçlarını takip eder.
 class CopingProvider with ChangeNotifier {
   final DatabaseHelper _db = DatabaseHelper();
 
   List<CopingStrategy> _strategies = [];
   bool _isLoading = false;
+  bool _isInitialized = false;
+  String? _errorMessage;
 
-  // Getters
+  // ─── Getters ───
   List<CopingStrategy> get strategies => _strategies;
   bool get isLoading => _isLoading;
+  bool get isInitialized => _isInitialized;
+
+  /// Son hata mesajı. Hata yoksa `null` döner.
+  String? get errorMessage => _errorMessage;
+
+  /// Hata durumunu temizler.
+  void clearError() {
+    _errorMessage = null;
+    notifyListeners();
+  }
 
   /// Varsayılan stratejiler
   List<CopingStrategy> get defaultStrategies =>
@@ -25,14 +41,23 @@ class CopingProvider with ChangeNotifier {
       _strategies.where((s) => s.usageCount > 0).toList();
 
   // ─── Stratejileri Yükle ───
-  Future<void> loadStrategies() async {
+  /// Veritabanından tüm stratejileri yükler.
+  ///
+  /// Çift yükleme koruması: [_isInitialized] true ise tekrar sorgu yapmaz.
+  /// Zorla yeniden yüklemek için [force] = `true` kullanın.
+  Future<void> loadStrategies({bool force = false}) async {
+    if (_isInitialized && !force) return;
+
     _isLoading = true;
+    _errorMessage = null;
     notifyListeners();
 
     try {
       _strategies = await _db.getStrategies();
+      _isInitialized = true;
     } catch (e) {
-      debugPrint('Strateji yükleme hatası: $e');
+      _errorMessage = 'Stratejiler yüklenirken bir sorun oluştu.';
+      debugPrint('❌ Strateji yükleme hatası: $e');
     }
 
     _isLoading = false;
@@ -47,7 +72,7 @@ class CopingProvider with ChangeNotifier {
       _strategies.add(strategy);
       notifyListeners();
     } catch (e) {
-      debugPrint('Strateji ekleme hatası: $e');
+      debugPrint('❌ Strateji ekleme hatası: $e');
       rethrow;
     }
   }
@@ -59,7 +84,7 @@ class CopingProvider with ChangeNotifier {
       _strategies.removeWhere((s) => s.id == id);
       notifyListeners();
     } catch (e) {
-      debugPrint('Strateji silme hatası: $e');
+      debugPrint('❌ Strateji silme hatası: $e');
       rethrow;
     }
   }
@@ -76,7 +101,7 @@ class CopingProvider with ChangeNotifier {
         notifyListeners();
       }
     } catch (e) {
-      debugPrint('Kullanım artırma hatası: $e');
+      debugPrint('❌ Kullanım artırma hatası: $e');
     }
   }
 

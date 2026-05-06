@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'app_theme.dart';
 import 'providers/journal_provider.dart';
 import 'providers/coping_provider.dart';
+import 'providers/suggestion_provider.dart';
 import 'screens/home_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/analytics_screen.dart';
@@ -36,6 +37,7 @@ class _MoodJournalAppState extends State<MoodJournalApp> {
       providers: [
         ChangeNotifierProvider(create: (_) => JournalProvider()..loadEntries()),
         ChangeNotifierProvider(create: (_) => CopingProvider()..loadStrategies()),
+        ChangeNotifierProvider(create: (_) => SuggestionProvider()..initialize()),
       ],
       child: ValueListenableBuilder<ThemeMode>(
         valueListenable: MoodJournalApp.themeNotifier,
