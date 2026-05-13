@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';
 
 import 'app_theme.dart';
 import 'providers/journal_provider.dart';
@@ -11,10 +13,17 @@ import 'screens/history_screen.dart';
 import 'screens/analytics_screen.dart';
 import 'screens/coping_screen.dart';
 import 'screens/settings_screen.dart';
+import 'screens/auth_wrapper.dart';
 import 'services/notification_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Firebase başlatma
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+
   await NotificationService().init();
   runApp(const MoodJournalApp());
 }
@@ -48,7 +57,7 @@ class _MoodJournalAppState extends State<MoodJournalApp> {
             theme: AppTheme.lightTheme,
             darkTheme: AppTheme.darkTheme,
             themeMode: themeMode,
-            home: const MainNavigation(),
+            home: const AuthWrapper(),
           );
         },
       ),

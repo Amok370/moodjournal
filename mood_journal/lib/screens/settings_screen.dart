@@ -5,6 +5,7 @@ import '../main.dart';
 import '../providers/journal_provider.dart';
 import '../services/pdf_service.dart';
 import '../services/notification_service.dart';
+import '../services/auth_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -160,6 +161,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     const Divider(height: 1),
                     const ListTile(title: Text('Açıklama'), subtitle: Text('Psikiyatrik rahatsızlıkları olan bireyler için duygusal sağlık takip uygulaması.')),
                   ],
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              // ─── Çıkış ───
+              _buildSectionTitle(context, '🚪 Hesap'),
+              const SizedBox(height: 12),
+              _buildCard(
+                context,
+                child: ListTile(
+                  leading: const Icon(Icons.logout_rounded, color: Colors.redAccent),
+                  title: const Text('Çıkış Yap', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w600)),
+                  subtitle: Text(AuthService().currentUser?.email ?? ''),
+                  onTap: () async {
+                    final confirm = await showDialog<bool>(
+                      context: context,
+                      builder: (ctx) => AlertDialog(
+                        title: const Text('Çıkış Yap'),
+                        content: const Text('Hesabınızdan çıkış yapmak istediğinize emin misiniz?'),
+                        actions: [
+                          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('İptal')),
+                          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Çıkış', style: TextStyle(color: Colors.red))),
+                        ],
+                      ),
+                    );
+                    if (confirm == true) {
+                      await AuthService().signOut();
+                    }
+                  },
                 ),
               ),
               const SizedBox(height: 80),

@@ -1,14 +1,16 @@
 import 'package:flutter/material.dart';
-import '../database/database_helper.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../models/journal_entry.dart';
 
 /// Journal entry'lerinin state yönetimini sağlayan provider.
 ///
-/// Veritabanından veri yükleme, CRUD operasyonları, arama ve
+/// Firestore üzerinden CRUD operasyonları, arama ve
 /// istatistik hesaplama işlevlerini UI katmanına sunar.
 /// Tüm async operasyonlar try-catch ile korunmuştur.
 class JournalProvider with ChangeNotifier {
-  final DatabaseHelper _db = DatabaseHelper();
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
 
   List<JournalEntry> _entries = [];
   List<JournalEntry> _filteredEntries = [];
@@ -16,6 +18,19 @@ class JournalProvider with ChangeNotifier {
   bool _isInitialized = false;
   String _searchQuery = '';
   String? _errorMessage;
+
+  // ─── Helpers ───
+
+  /// Mevcut kullanıcının UID'sini döner. Giriş yapılmamışsa hata fırlatır.
+  String get _uid {
+    final user = _auth.currentUser;
+    if (user == null) throw Exception('Kullanıcı oturumu bulunamadı.');
+    return user.uid;
+  }
+
+  /// Mevcut kullanıcının journal_entries alt koleksiyonuna referans.
+  CollectionReference<Map<String, dynamic>> get _entriesRef =>
+      _firestore.collection('users').doc(_uid).collection('journal_entries');
 
   // ─── Getters ───
   List<JournalEntry> get entries =>
@@ -35,10 +50,10 @@ class JournalProvider with ChangeNotifier {
   }
 
   // ─── Entry'leri Yükle ───
-  /// Veritabanından tüm entry'leri yükler.
+  /// Firestore'dan mevcut kullanıcının tüm entry'lerini yükler.
   ///
   /// Çift yükleme koruması vardır: [_isInitialized] kontrolü sayesinde
-  /// birden fazla kez çağrılsa bile yalnızca ilkinde DB sorgusu yapar.
+  /// birden fazla kez çağrılsa bile yalnızca ilkinde sorgu yapar.
   /// Zorla yeniden yüklemek için [force] parametresini `true` yapın.
   Future<void> loadEntries({bool force = false}) async {
     if (_isInitialized && !force) return;
@@ -48,7 +63,13 @@ class JournalProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      _entries = await _db.getEntries();
+      final snapshot = await _entriesRef
+          .orderBy('date', descending: true)
+          .get();
+
+      _entries = snapshot.docs
+          .map((doc) => JournalEntry.fromDocument(doc))
+          .toList();
       _isInitialized = true;
     } catch (e) {
       _errorMessage = 'Veriler yüklenirken bir sorun oluştu.';
@@ -62,15 +83,12 @@ class JournalProvider with ChangeNotifier {
   // ─── Yeni Entry Ekle ───
   Future<void> addEntry(JournalEntry entry) async {
     try {
-      final id = await _db.insertEntry(entry);
-      entry.id = id;
+      // userId'yi mevcut kullanıcıyla eşleştir
+      final entryWithUser = entry.copyWith(userId: _uid);
+      final docRef = await _entriesRef.add(entryWithUser.toMap());
+      entryWithUser.id = docRef.id;
 
-      // Coping stratejisi kullanıldıysa sayacını artır
-      if (entry.copingStrategy != null && entry.copingStrategy!.isNotEmpty) {
-        await _db.incrementStrategyUsage(entry.copingStrategy!);
-      }
-
-      _entries.insert(0, entry); // En başa ekle
+      _entries.insert(0, entryWithUser); // En başa ekle
       notifyListeners();
     } catch (e) {
       debugPrint('❌ Entry ekleme hatası: $e');
@@ -81,7 +99,12 @@ class JournalProvider with ChangeNotifier {
   // ─── Entry Güncelle ───
   Future<void> updateEntry(JournalEntry entry) async {
     try {
-      await _db.updateEntry(entry);
+      if (entry.id == null) throw Exception('Entry ID bulunamadı.');
+
+      final data = entry.toMap();
+      data['updated_at'] = Timestamp.now();
+      await _entriesRef.doc(entry.id).update(data);
+
       final index = _entries.indexWhere((e) => e.id == entry.id);
       if (index != -1) {
         _entries[index] = entry;
@@ -94,9 +117,9 @@ class JournalProvider with ChangeNotifier {
   }
 
   // ─── Entry Sil ───
-  Future<void> deleteEntry(int id) async {
+  Future<void> deleteEntry(String id) async {
     try {
-      await _db.deleteEntry(id);
+      await _entriesRef.doc(id).delete();
       _entries.removeWhere((e) => e.id == id);
       notifyListeners();
     } catch (e) {
@@ -106,12 +129,20 @@ class JournalProvider with ChangeNotifier {
   }
 
   // ─── Arama ───
+  /// Client-side arama. Firestore tam metin araması desteklemediği için
+  /// yüklü entry'ler üzerinden filtreleme yapar.
   Future<void> search(String query) async {
     _searchQuery = query;
     if (query.isEmpty) {
       _filteredEntries = [];
     } else {
-      _filteredEntries = await _db.searchEntries(query);
+      final lowerQuery = query.toLowerCase();
+      _filteredEntries = _entries.where((e) {
+        final triggerMatch = e.trigger.toLowerCase().contains(lowerQuery);
+        final notesMatch =
+            e.notes?.toLowerCase().contains(lowerQuery) ?? false;
+        return triggerMatch || notesMatch;
+      }).toList();
     }
     notifyListeners();
   }
@@ -148,35 +179,101 @@ class JournalProvider with ChangeNotifier {
         .toList();
   }
 
-  // ═══════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════
   // İSTATİSTİK FONKSİYONLARI
-  // ═══════════════════════════════════════════
+  // ═══════════════════════════════════════════════════════════════
 
   /// Bu ayın ortalama mood skoru
   Future<double> getMonthlyAverage() async {
     final now = DateTime.now();
     final start = DateTime(now.year, now.month, 1);
-    return await _db.getAverageMood(start, now);
+    final monthEntries = _entries.where((e) =>
+        e.date.isAfter(start.subtract(const Duration(seconds: 1))) &&
+        e.date.isBefore(now.add(const Duration(days: 1))));
+    if (monthEntries.isEmpty) return 0.0;
+    final sum = monthEntries.fold<int>(0, (s, e) => s + e.moodScore);
+    return sum / monthEntries.length;
   }
 
   /// Haftalık ortalamalar (son 4 hafta)
   Future<List<Map<String, dynamic>>> getWeeklyAverages() async {
-    return await _db.getWeeklyAverages();
+    final now = DateTime.now();
+    final List<Map<String, dynamic>> weeklyData = [];
+
+    for (int i = 3; i >= 0; i--) {
+      final weekEnd = now.subtract(Duration(days: i * 7));
+      final weekStart = weekEnd.subtract(const Duration(days: 7));
+
+      final weekEntries = _entries.where((e) =>
+          e.date.isAfter(weekStart) && e.date.isBefore(weekEnd));
+
+      double avg = 0.0;
+      if (weekEntries.isNotEmpty) {
+        final sum = weekEntries.fold<int>(0, (s, e) => s + e.moodScore);
+        avg = sum / weekEntries.length;
+      }
+
+      weeklyData.add({
+        'weekStart': weekStart,
+        'weekEnd': weekEnd,
+        'average': avg,
+        'count': weekEntries.length,
+        'label': 'Hafta ${4 - i}',
+      });
+    }
+    return weeklyData;
   }
 
   /// Günlük ortalamalar (son N gün)
   Future<List<Map<String, dynamic>>> getDailyAverages(int days) async {
-    return await _db.getDailyAverages(days);
+    final now = DateTime.now();
+    final List<Map<String, dynamic>> dailyData = [];
+
+    for (int i = days - 1; i >= 0; i--) {
+      final day = DateTime(now.year, now.month, now.day - i);
+      final dayEnd = day.add(const Duration(days: 1));
+
+      final dayEntries = _entries.where((e) =>
+          e.date.isAfter(day.subtract(const Duration(seconds: 1))) &&
+          e.date.isBefore(dayEnd));
+
+      double avg = 0.0;
+      if (dayEntries.isNotEmpty) {
+        final sum = dayEntries.fold<int>(0, (s, e) => s + e.moodScore);
+        avg = sum / dayEntries.length;
+      }
+
+      dailyData.add({
+        'date': day,
+        'average': avg,
+        'count': dayEntries.length,
+      });
+    }
+    return dailyData;
   }
 
   /// En sık tetikleyiciler
   Future<List<Map<String, dynamic>>> getTopTriggers({int limit = 5}) async {
-    return await _db.getTopTriggers(limit: limit);
+    final Map<String, int> triggerCounts = {};
+    for (final entry in _entries) {
+      if (entry.trigger.isNotEmpty) {
+        triggerCounts[entry.trigger] =
+            (triggerCounts[entry.trigger] ?? 0) + 1;
+      }
+    }
+
+    final sorted = triggerCounts.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    return sorted
+        .take(limit)
+        .map((e) => {'trigger': e.key, 'count': e.value})
+        .toList();
   }
 
   /// Toplam entry sayısı
   Future<int> getTotalCount() async {
-    return await _db.getTotalEntryCount();
+    return _entries.length;
   }
 
   /// Tarih aralığına göre entry'ler (PDF rapor için)
@@ -184,7 +281,9 @@ class JournalProvider with ChangeNotifier {
     DateTime start,
     DateTime end,
   ) async {
-    return await _db.getEntriesByDateRange(start, end);
+    return _entries.where((e) =>
+        e.date.isAfter(start.subtract(const Duration(seconds: 1))) &&
+        e.date.isBefore(end.add(const Duration(days: 1)))).toList();
   }
 
   /// Streak hesapla (üst üste kaç gün kayıt yapılmış)
@@ -210,5 +309,16 @@ class JournalProvider with ChangeNotifier {
     }
 
     return streak;
+  }
+
+  /// Kullanıcı çıkış yaptığında state'i sıfırlar.
+  void reset() {
+    _entries = [];
+    _filteredEntries = [];
+    _isInitialized = false;
+    _isLoading = false;
+    _searchQuery = '';
+    _errorMessage = null;
+    notifyListeners();
   }
 }
